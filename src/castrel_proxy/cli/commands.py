@@ -21,6 +21,7 @@ from ..core.daemon import get_daemon_manager
 from ..mcp.manager import get_mcp_manager
 from ..network.api_client import APIError, NetworkError, PairingError, get_api_client
 from ..network.websocket_client import WebSocketClient
+from .proxy_commands import proxy_app
 from .skill_commands import skill_app
 
 # from ..security.whitelist import init_whitelist_file  # DISABLED: Whitelist mechanism disabled
@@ -30,6 +31,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(level
 
 app = typer.Typer(add_completion=False, pretty_exceptions_show_locals=False)
 app.add_typer(skill_app, name="skill")
+app.add_typer(proxy_app, name="proxy")
 
 
 def decode_verification_code(verification_code: str) -> Dict[str, Any]:
