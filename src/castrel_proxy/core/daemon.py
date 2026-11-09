@@ -97,6 +97,14 @@ class DaemonManager:
         signal.signal(signal.SIGTERM, self._signal_handler)
         signal.signal(signal.SIGINT, self._signal_handler)
 
+    def register_current_process(self) -> None:
+        """Track a foreground process with the same pid file used by background runs."""
+        if self.is_running():
+            raise RuntimeError(f"Proxy node is already running with PID {self.get_pid()}")
+        self.pid_file.parent.mkdir(parents=True, exist_ok=True)
+        self._write_pid()
+        atexit.register(self._cleanup)
+
     def _write_pid(self):
         """Write current process PID to file"""
         pid = os.getpid()
@@ -204,3 +212,9 @@ def get_daemon_manager() -> DaemonManager:
     log_file = config_dir / "castrel-proxy.log"
 
     return DaemonManager(pid_file, log_file)
+
+
+def get_proxy_daemon_manager() -> DaemonManager:
+    """Daemon manager for `castrel-proxy proxy start` (separate pid/log files)."""
+    config_dir = Path.home() / ".castrel"
+    return DaemonManager(config_dir / "proxy-node.pid", config_dir / "proxy-node.log")

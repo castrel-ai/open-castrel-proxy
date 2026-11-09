@@ -34,6 +34,24 @@ cd castrel-proxy
 pip install -e .
 ```
 
+If `which -a castrel-proxy` lists an older binary in `~/.local/bin` or `/usr/local/bin`, the
+shell is not running the editable install. Use `uv run castrel-proxy`, `.venv/bin/castrel-proxy`,
+or replace the old binary; see [docs/proxy-node.md](docs/proxy-node.md#21-check-for-an-older-packaged-binary-first).
+
+## 🔒 Proxy node mode
+
+`castrel-proxy` also runs as the user-side daemon for Castrel private-network proxies: it
+opens one outbound WebSocket and executes connectors and shell commands inside the customer
+network. See [docs/proxy-node.md](docs/proxy-node.md).
+
+```bash
+castrel-proxy proxy pair --server <server_url> --code <pairing_code>
+castrel-proxy proxy start          # background by default
+castrel-proxy proxy status
+castrel-proxy proxy restart
+castrel-proxy proxy stop
+```
+
 ## 🚀 Quick Start
 
 ### 1. Pair with Server

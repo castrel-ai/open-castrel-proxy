@@ -21,6 +21,24 @@
 uv sync
 ```
 
+如果 `which -a castrel-proxy` 先列出 `~/.local/bin` 或 `/usr/local/bin` 里的旧二进制，说明
+shell 没有使用可编辑安装。请使用 `uv run castrel-proxy`、`.venv/bin/castrel-proxy`，或先移走
+旧二进制；详见 [docs/proxy-node.zh-CN.md](docs/proxy-node.zh-CN.md#2-从本地源码安装)。
+
+## 🔒 网络代理节点模式
+
+`castrel-proxy` 也可以作为 Castrel 私有网络代理的用户侧守护进程：向 Castrel 发起一条出站
+WebSocket，在用户内网执行 connector 与 shell 命令。详见
+[docs/proxy-node.zh-CN.md](docs/proxy-node.zh-CN.md)。
+
+```bash
+castrel-proxy proxy pair --server <服务器地址> --code <配对码>
+castrel-proxy proxy start          # background by default
+castrel-proxy proxy status
+castrel-proxy proxy restart
+castrel-proxy proxy stop
+```
+
 ## 使用方法
 
 ### 1. 配对到服务端

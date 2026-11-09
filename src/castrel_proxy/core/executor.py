@@ -7,6 +7,7 @@ Responsible for executing shell commands and returning results
 import asyncio
 import os
 import shlex
+import signal
 from typing import Dict, List, Optional, Sequence, Tuple
 
 
@@ -98,6 +99,35 @@ class CommandExecutor:
         # Log file path
         self.log_file = os.path.join(self.session_dir, "terminal.log")
 
+        # Running process, exposed so a cancellation can terminate the command.
+        self._process: Optional[asyncio.subprocess.Process] = None
+        self._cancelled = False
+
+    def cancel(self) -> bool:
+        """Terminate the running command, if any.
+
+        The awaiting ``execute`` call then returns with the killed process exit code.
+        A cancellation that arrives before the subprocess exists is remembered and applied
+        as soon as it is spawned. Returns True when a live process was signalled.
+        """
+        self._cancelled = True
+        process = self._process
+        if process is None or process.returncode is not None:
+            return False
+        return self._terminate(process)
+
+    @staticmethod
+    def _terminate(process: asyncio.subprocess.Process) -> bool:
+        """Kill the command and the process group it spawned, so children do not survive."""
+        try:
+            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            try:
+                process.kill()
+            except ProcessLookupError:
+                return False
+        return True
+
     async def execute(self, command: str, cwd: Optional[str] = None) -> ExecutionResult:
         """
         Execute shell command asynchronously
@@ -122,7 +152,8 @@ class CommandExecutor:
             working_dir = os.path.expanduser(os.path.expandvars(actual_cwd))
 
             # Create subprocess to execute command
-            # Set stdin to DEVNULL to prevent command from waiting for input and hanging
+            # Set stdin to DEVNULL to prevent command from waiting for input and hanging.
+            # A dedicated session lets a cancellation kill the whole command process group.
             process = await asyncio.create_subprocess_shell(
                 command,
                 stdin=asyncio.subprocess.DEVNULL,
@@ -130,14 +161,18 @@ class CommandExecutor:
                 stderr=asyncio.subprocess.PIPE,
                 cwd=working_dir,
                 env=os.environ.copy(),
+                start_new_session=True,
             )
 
             # Wait for command to complete (with timeout)
+            self._process = process
+            if self._cancelled:
+                self._terminate(process)
             try:
                 stdout_bytes, stderr_bytes = await asyncio.wait_for(process.communicate(), timeout=self.timeout)
             except asyncio.TimeoutError:
                 # Timeout, terminate process
-                process.kill()
+                self._terminate(process)
                 await process.wait()
                 execution_time = time.time() - start_time
                 result = ExecutionResult(
@@ -149,6 +184,8 @@ class CommandExecutor:
                 # Log result
                 self._log_command(command, working_dir, result)
                 return result
+            finally:
+                self._process = None
 
             # Decode output
             stdout = stdout_bytes.decode("utf-8", errors="replace")
