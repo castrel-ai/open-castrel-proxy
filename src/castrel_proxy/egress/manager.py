@@ -115,8 +115,17 @@ class EgressManager:
         if limits is not None:
             await self._error(stream_id, "stream_limit", limits)
             return
-        if node_streams >= self.max_streams:
-            await self._error(stream_id, "stream_limit", "The node reached its stream limit.")
+        node_limit = (
+            policy.max_concurrency
+            or policy.network.max_streams_per_node
+            or self.max_streams
+        )
+        if node_streams >= node_limit:
+            await self._error(
+                stream_id,
+                "stream_limit",
+                "The node reached its configured concurrency limit.",
+            )
             return
 
         try:

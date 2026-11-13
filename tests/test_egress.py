@@ -218,3 +218,34 @@ def test_node_policy_parses_the_network_block() -> None:
 def test_legacy_destinations_map_into_network() -> None:
     policy = parse_policy({"allowed_destinations": ["10.0.0.0/8"]})
     assert policy.network.allowed_destinations == ["10.0.0.0/8"]
+
+
+@pytest.mark.asyncio
+async def test_custom_max_concurrency_limits_streams() -> None:
+    server, port = await echo_server()
+    policy = parse_policy(
+        {"max_concurrency": 1, "network": {"allowed_destinations": ["127.0.0.1"]}}
+    )
+    captured: list[tuple[str, dict[str, Any]]] = []
+
+    async def send(message_type: str, data: dict[str, Any]) -> None:
+        captured.append((message_type, data))
+
+    egress = EgressManager(send=send, policy_getter=lambda: policy)
+    egress.configure({}, policy_version=1)
+    frames = captured
+    try:
+        await egress.open(
+            {"stream_id": "a" * 32, "host": "127.0.0.1", "port": port, "policy_version": 1}
+        )
+        await wait_for_frame(frames, "stream.opened")
+        await egress.open(
+            {"stream_id": "b" * 32, "host": "127.0.0.1", "port": port, "policy_version": 1}
+        )
+        error = await wait_for_frame(frames, "stream.error")
+        assert error["code"] == "stream_limit"
+        assert error["stream_id"] == "b" * 32
+    finally:
+        await egress.stop()
+        server.close()
+        await server.wait_closed()

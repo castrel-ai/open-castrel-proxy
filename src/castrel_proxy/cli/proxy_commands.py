@@ -15,6 +15,7 @@ import typer
 
 from ..core.daemon import DaemonManager, get_proxy_daemon_manager
 from ..core.policy_state import DEFAULT_POLICY_STATE_FILE, load_policy_state
+from ..pairing.device import device_id
 from ..pairing.keys import NodeKeys, load_keys, new_private_keys
 from ..security.policy import parse_policy
 from ..transport.spool import Outbox
@@ -182,6 +183,11 @@ def pair(
     key_file: Path = typer.Option(DEFAULT_KEY_FILE, "--key-file", help="Where to store node keys"),
     no_start: bool = typer.Option(False, "--no-start", help="Pair without starting the node"),
     foreground: bool = typer.Option(False, "--foreground", "-f", help="Run in the foreground"),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Overwrite local keys after the previous node was revoked or deleted",
+    ),
 ) -> None:
     """Redeem a pairing code, store keys and start the node in the background."""
     resolved_code = code_option or (code or "")
@@ -194,6 +200,18 @@ def pair(
             err=True,
         )
         raise typer.Exit(2)
+    try:
+        existing = load_keys(key_file)
+    except Exception:
+        existing = None
+    if existing is not None and not force:
+        typer.secho(
+            f"This device is already paired as node {existing.node_id}. "
+            "Revoke or delete it in Castrel first, or pass --force after doing so.",
+            fg=typer.colors.YELLOW,
+            err=True,
+        )
+        raise typer.Exit(1)
     ed_private, ed_public, x_private, x_public = new_private_keys()
     payload = {
         "code": resolved_code,
@@ -202,6 +220,7 @@ def pair(
         "name": name or socket.gethostname(),
         "platform": _platform(),
         "python_version": platform.python_version(),
+        "device_id": device_id(),
         "protocol": 1,
     }
     url = f"{resolved_server.rstrip('/')}/api/v1/proxies/pairings/redeem"
@@ -211,11 +230,24 @@ def pair(
         typer.secho(f"Pairing request failed: {error}", fg=typer.colors.RED, err=True)
         raise typer.Exit(1) from error
     if response.status_code != 200:
-        typer.secho(
-            f"Pairing rejected ({response.status_code}): {response.text[:500]}",
-            fg=typer.colors.RED,
-            err=True,
-        )
+        try:
+            detail = response.json().get("detail") or {}
+        except ValueError:
+            detail = {}
+        message = detail.get("message") if isinstance(detail, dict) else ""
+        if response.status_code == 409:
+            typer.secho(
+                message
+                or "This device is already paired. Revoke or delete the existing node first.",
+                fg=typer.colors.RED,
+                err=True,
+            )
+        else:
+            typer.secho(
+                f"Pairing rejected ({response.status_code}): {response.text[:500]}",
+                fg=typer.colors.RED,
+                err=True,
+            )
         raise typer.Exit(1)
     document = response.json()
     keys = NodeKeys(

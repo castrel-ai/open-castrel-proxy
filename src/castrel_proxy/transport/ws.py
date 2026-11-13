@@ -33,7 +33,7 @@ from ..security.policy import (
     effective_timeout,
     parse_policy,
 )
-from ..security.whitelist import is_command_allowed
+from ..security.whitelist import get_default_whitelist, is_command_allowed
 from .spool import Outbox
 
 logger = logging.getLogger(__name__)
@@ -94,6 +94,7 @@ class ProxyNodeRuntime:
         self._send_lock = asyncio.Lock()
         # Cancellation hooks for running requests, keyed by request_id.
         self._inflight: dict[str, Callable[[], Any]] = {}
+        self._exec_semaphore = asyncio.Semaphore(8)
         self._active_ws: aiohttp.ClientWebSocketResponse | None = None
         self.egress = EgressManager(
             send=self._send_stream_frame,
@@ -196,6 +197,7 @@ class ProxyNodeRuntime:
                     "python_version": _python_version(),
                     "protocol_version": PROTOCOL_VERSION,
                     "capabilities": [EGRESS_CAPABILITY],
+                    "exec_whitelist": get_default_whitelist(),
                 },
                 node_id=self.keys.node_id,
             )
@@ -209,7 +211,13 @@ class ProxyNodeRuntime:
         self.policy = dict(ready["data"].get("policy") or {})
         self.policy_version = int(ready["data"].get("policy_version") or 1)
         self._policy = parse_policy(self.policy)
+        self._sync_exec_semaphore()
         self._remember_policy()
+
+    def _sync_exec_semaphore(self) -> None:
+        """Apply the node's max concurrency to shell execution as well as egress streams."""
+        limit = self._policy.max_concurrency or 8
+        self._exec_semaphore = asyncio.Semaphore(max(1, int(limit)))
 
     def _remember_policy(self) -> None:
         """Snapshot the received policy so `proxy status` can show its limits."""
@@ -228,6 +236,7 @@ class ProxyNodeRuntime:
             self.policy_version = int(data.get("version") or self.policy_version)
             self._policy = parse_policy(self.policy)
             self.egress.policy_version = self.policy_version
+            self._sync_exec_semaphore()
             self._remember_policy()
             return
         if message_type == "token.rotate":
@@ -296,6 +305,17 @@ class ProxyNodeRuntime:
             effective_timeout(self._policy, requested, 3600.0),
             exec_policy.max_timeout_seconds,
         )
+        try:
+            await asyncio.wait_for(self._exec_semaphore.acquire(), timeout=min(timeout, 30.0))
+        except TimeoutError:
+            await self._exec_result(
+                ws,
+                request_id,
+                126,
+                "",
+                "The node reached its configured concurrency limit.",
+            )
+            return
         started = time.monotonic()
         executor = CommandExecutor(
             session_id=str(data.get("session_id") or "proxy-exec"), timeout=timeout
@@ -308,6 +328,7 @@ class ProxyNodeRuntime:
             raise
         finally:
             self._inflight.pop(request_id, None)
+            self._exec_semaphore.release()
         stdout, stdout_cut = _cap_output(result.stdout, exec_policy.max_output_bytes)
         stderr, stderr_cut = _cap_output(result.stderr, exec_policy.max_output_bytes)
         await self._send(

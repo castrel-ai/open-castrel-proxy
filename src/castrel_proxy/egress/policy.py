@@ -51,8 +51,9 @@ def check_stream_limits(
     policy: ProxyPolicy, node_streams: int, instance_streams: int
 ) -> str | None:
     network = policy.network
-    if network.max_streams_per_node is not None and node_streams >= network.max_streams_per_node:
-        return "The node reached its network stream limit."
+    node_limit = policy.max_concurrency or network.max_streams_per_node
+    if node_limit is not None and node_streams >= node_limit:
+        return "The node reached its configured concurrency limit."
     if (
         network.max_streams_per_instance is not None
         and instance_streams >= network.max_streams_per_instance
