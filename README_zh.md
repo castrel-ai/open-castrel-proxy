@@ -37,6 +37,10 @@ castrel-proxy proxy start          # background by default
 castrel-proxy proxy status
 castrel-proxy proxy restart
 castrel-proxy proxy stop
+castrel-proxy proxy logs -f        # 跟踪节点日志
+castrel-proxy proxy config         # 路径与节点 ID，token 脱敏
+castrel-proxy proxy unpair         # 删除本地配对
+castrel-proxy proxy uninstall      # 删除本地状态与二进制
 ```
 
 ## 使用方法

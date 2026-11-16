@@ -50,6 +50,10 @@ castrel-proxy proxy start          # background by default
 castrel-proxy proxy status
 castrel-proxy proxy restart
 castrel-proxy proxy stop
+castrel-proxy proxy logs -f        # follow the node log
+castrel-proxy proxy config         # paths and node id, token redacted
+castrel-proxy proxy unpair         # remove the local pairing
+castrel-proxy proxy uninstall      # remove local state and the binary
 ```
 
 ## 🚀 Quick Start

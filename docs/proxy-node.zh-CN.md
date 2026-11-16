@@ -153,10 +153,37 @@ castrel-proxy proxy stop       # 停止后台进程
 
 `start` / `restart` 都支持 `--foreground`，需要留在终端时使用。
 
+### 查看、日志与卸载
+
+```bash
+castrel-proxy proxy logs              # 最近 50 行节点日志
+castrel-proxy proxy logs -n 200       # 最近 200 行
+castrel-proxy proxy logs -f           # 持续跟踪，Ctrl+C 退出
+castrel-proxy proxy config            # 路径、节点 ID、服务器、脱敏的 token 摘要
+castrel-proxy proxy unpair            # 停止节点并删除本地配对
+castrel-proxy proxy uninstall         # 删除本地状态与二进制
+```
+
+`logs` 读的是 `~/.castrel/proxy-node.log`（不是 legacy 的 `~/.castrel/castrel-proxy.log`），
+从文件末尾反向读取，不需要把几百 MB 的日志整份载入内存。`config` 只打印 key 文件权限和 token
+的 SHA-256 前 8 位，token 与两个私钥都不会输出。
+
+`unpair` 会先停止后台节点，让 Castrel 收到断连（否则节点仍显示在线），再删除
+`node/keys.json`、`node/policy.json`、`node/outbox.jsonl`，保留日志文件。**它只改本地状态**：
+还需要在 Castrel 的 `/proxies` 里撤销或删除该节点，否则同一台机器再次配对会被平台以
+`node_already_paired` 拒绝。
+
+`uninstall` 会停止节点和 legacy bridge 两个守护进程，并删除节点身份、策略快照、outbox、
+PID 与日志文件、`~/.castrel/bundles/`、`proxy-exec-*` 会话目录、legacy 的 `config.yaml`
+以及 `castrel-proxy` 二进制。`--keep-logs` 保留日志；`--keep-binary` 在可编辑安装（`uv tool
+install --editable` 或项目 `.venv`）下保留二进制。`~/.castrel/skills/`、`mcp.json`、
+`whitelist.conf` 属于用户内容，不会删除。
+
 ### 运行时目录
 
 ```text
 ~/.castrel/node/keys.json       node id、token、私钥、服务器地址
+~/.castrel/node/policy.json     最近一次从平台收到的策略
 ~/.castrel/node/outbox.jsonl    有界离线 outbox
 ~/.castrel/proxy-node.pid       后台进程 PID
 ~/.castrel/proxy-node.log       后台进程日志
@@ -227,6 +254,9 @@ connector 调用受 `allowed_connectors`、`allowed_tools`、`denied_tools`、
 |---|---|
 | `No such command 'proxy'` | `which -a castrel-proxy` 先找到了旧的打包二进制。激活 `.venv`、使用 `.venv/bin/castrel-proxy`，或 `uv run castrel-proxy`。 |
 | `Cannot load node keys` | 先执行 `castrel-proxy proxy pair`；检查 `~/.castrel/node/keys.json` 权限。 |
+| `proxy logs` 报 `Log file not found` | 节点还没在后台运行过。`castrel-proxy proxy start` 才会创建 `~/.castrel/proxy-node.log`；legacy bridge 的日志是另一个文件。 |
+| 配对返回 `node_already_paired`（409） | `proxy unpair` 只删本地状态。需要先在 Castrel 的 `/proxies` 撤销或删除该节点，再配对同一台机器；或在此之后用 `--force`。 |
+| `proxy uninstall` 之后 `~/.castrel/skills/`、`whitelist.conf` 仍在 | 属于预期：这些是用户内容。命令在确认前会列出它要删除的全部路径。 |
 | WebSocket 关闭 `4001` | token 无效、节点非 `active` 或 Ed25519 签名失败；重新配对。 |
 | WebSocket 关闭 `4002` | 节点已撤销；重新配对。 |
 | WebSocket 关闭 `4003` | 协议版本不支持；升级客户端。 |

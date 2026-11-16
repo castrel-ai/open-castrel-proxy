@@ -15,12 +15,17 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_POLICY_STATE_FILE = Path.home() / ".castrel" / "node" / "policy.json"
+
+def default_policy_state_file() -> Path:
+    """Where the policy snapshot lives for the default install layout."""
+    return Path.home() / ".castrel" / "node" / "policy.json"
 
 
-def save_policy_state(
-    path: Path | None, *, version: int, document: dict[str, Any]
-) -> None:
+# Kept for callers that imported the path before it became a function.
+DEFAULT_POLICY_STATE_FILE = default_policy_state_file()
+
+
+def save_policy_state(path: Path | None, *, version: int, document: dict[str, Any]) -> None:
     """Write the policy snapshot atomically; a failure must never break the connection."""
     if path is None:
         return
@@ -60,4 +65,9 @@ def load_policy_state(path: Path) -> dict[str, Any] | None:
     }
 
 
-__all__ = ["DEFAULT_POLICY_STATE_FILE", "load_policy_state", "save_policy_state"]
+__all__ = [
+    "DEFAULT_POLICY_STATE_FILE",
+    "default_policy_state_file",
+    "load_policy_state",
+    "save_policy_state",
+]

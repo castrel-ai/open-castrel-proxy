@@ -17,10 +17,11 @@ import typer
 
 from ..core.client_id import get_client_id
 from ..core.config import ConfigError, get_config
-from ..core.daemon import get_daemon_manager
+from ..core.daemon import get_daemon_manager, get_proxy_daemon_manager
 from ..mcp.manager import get_mcp_manager
 from ..network.api_client import APIError, NetworkError, PairingError, get_api_client
 from ..network.websocket_client import WebSocketClient
+from . import local_state
 from .proxy_commands import proxy_app
 from .skill_commands import skill_app
 
@@ -732,11 +733,13 @@ def uninstall(
     """
     Uninstall proxy - remove all local data, configuration, and the binary itself
 
-    Stops the running service (if any), removes pairing configuration,
-    PID file, log files from ~/.castrel/, and the castrel-proxy binary.
+    Stops the running services (if any) and removes the legacy bridge config, the v2 node
+    identity (keys, policy snapshot, outbox), PID files, log files from ~/.castrel/,
+    installed bundles and the castrel-proxy binary.
     """
     config_obj = get_config()
     daemon_mgr = get_daemon_manager()
+    proxy_daemon_mgr = get_proxy_daemon_manager()
 
     # Resolve binary path (works for both script-installed binary and pip-installed entry point)
     binary_path: Path | None = None
@@ -747,13 +750,20 @@ def uninstall(
     typer.secho("=== Uninstall Castrel Proxy ===", bold=True)
     typer.echo("\nThe following local data will be removed:")
     typer.echo(f"  Config file : {config_obj.config_file}")
-    typer.echo(f"  PID file    : {daemon_mgr.pid_file}")
+    typer.echo(f"  PID files   : {daemon_mgr.pid_file}, {proxy_daemon_mgr.pid_file}")
+    typer.echo(f"  Node keys   : {local_state.node_key_file()}")
+    typer.echo(f"  Policy      : {local_state.node_policy_file()}")
+    typer.echo(f"  Outbox      : {local_state.node_outbox_file()}")
+    typer.echo(f"  Bundles     : {local_state.bundles_dir()}")
     if not keep_logs:
-        typer.echo(f"  Log file    : {daemon_mgr.log_file}")
+        typer.echo(f"  Log files   : {daemon_mgr.log_file}, {proxy_daemon_mgr.log_file}")
     else:
-        typer.echo(f"  Log file    : {daemon_mgr.log_file} (kept)")
+        typer.echo(f"  Log files   : {daemon_mgr.log_file}, {proxy_daemon_mgr.log_file} (kept)")
     if binary_path and binary_path.exists():
         typer.echo(f"  Binary      : {binary_path}")
+    typer.echo(
+        "  Kept        : ~/.castrel/skills/, mcp.json, whitelist.conf (user content)"
+    )
 
     if not yes:
         confirm = typer.confirm("\nProceed with uninstall?")
@@ -761,14 +771,19 @@ def uninstall(
             typer.echo("Cancelled")
             raise typer.Exit(0)
 
-    # Stop daemon if running
-    if daemon_mgr.is_running():
-        pid = daemon_mgr.get_pid()
-        typer.echo(f"\nStopping bridge service (PID: {pid})...")
-        if daemon_mgr.stop():
-            typer.secho("✓ Bridge stopped", fg=typer.colors.GREEN)
+    # Stop both daemons so the platform sees the disconnect and nothing reconnects later.
+    for label, manager in (
+        ("bridge service", daemon_mgr),
+        ("proxy node", proxy_daemon_mgr),
+    ):
+        if not manager.is_running():
+            continue
+        pid = manager.get_pid()
+        typer.echo(f"\nStopping {label} (PID: {pid})...")
+        if manager.stop():
+            typer.secho(f"✓ {label.capitalize()} stopped", fg=typer.colors.GREEN)
         else:
-            typer.secho("⚠ Failed to stop bridge, proceeding anyway", fg=typer.colors.YELLOW)
+            typer.secho(f"⚠ Failed to stop {label}, proceeding anyway", fg=typer.colors.YELLOW)
 
     typer.echo("")
 
@@ -782,22 +797,37 @@ def uninstall(
     else:
         typer.echo("  Config file not found, skipping")
 
-    # Remove PID file
-    if daemon_mgr.pid_file.exists():
-        try:
-            daemon_mgr.pid_file.unlink()
-            typer.secho("✓ Removed PID file", fg=typer.colors.GREEN)
-        except Exception as e:
-            typer.secho(f"⚠ Failed to remove PID file: {e}", fg=typer.colors.YELLOW)
+    # Remove the v2 node identity and runtime data, so no private key outlives the binary.
+    for label, path, removed, message in local_state.remove_node_state():
+        if removed:
+            typer.secho(f"✓ Removed {label}: {path}", fg=typer.colors.GREEN)
+        elif "not found" in message:
+            typer.echo(f"  {label} not found, skipping")
+        else:
+            typer.secho(f"⚠ {label}: {message}", fg=typer.colors.YELLOW)
+    for path in (
+        daemon_mgr.pid_file,
+        proxy_daemon_mgr.pid_file,
+    ):
+        removed, message = local_state.remove_file(path)
+        if removed:
+            typer.secho(f"✓ Removed PID file: {path}", fg=typer.colors.GREEN)
+        elif "not found" not in message:
+            typer.secho(f"⚠ PID file: {message}", fg=typer.colors.YELLOW)
+    bundles_removed, bundles_message = local_state.remove_tree(local_state.bundles_dir())
+    if bundles_removed:
+        typer.secho(f"✓ Removed {local_state.bundles_dir()}", fg=typer.colors.GREEN)
+    elif "not found" not in bundles_message:
+        typer.secho(f"⚠ Bundles: {bundles_message}", fg=typer.colors.YELLOW)
 
-    # Remove log file
+    # Remove log files
     if not keep_logs:
-        if daemon_mgr.log_file.exists():
-            try:
-                daemon_mgr.log_file.unlink()
-                typer.secho("✓ Removed log file", fg=typer.colors.GREEN)
-            except Exception as e:
-                typer.secho(f"⚠ Failed to remove log file: {e}", fg=typer.colors.YELLOW)
+        for path in (daemon_mgr.log_file, proxy_daemon_mgr.log_file):
+            removed, message = local_state.remove_file(path)
+            if removed:
+                typer.secho(f"✓ Removed log file: {path}", fg=typer.colors.GREEN)
+            elif "not found" not in message:
+                typer.secho(f"⚠ Log file: {message}", fg=typer.colors.YELLOW)
 
     # Remove binary (installed by install.sh)
     if binary_path and binary_path.exists():

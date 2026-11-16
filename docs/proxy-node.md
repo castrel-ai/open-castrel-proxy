@@ -162,10 +162,38 @@ castrel-proxy proxy stop       # stop the background process
 `restart` and `start` accept `--foreground` when the process must stay attached to the
 terminal.
 
+### Inspect, log and remove
+
+```bash
+castrel-proxy proxy logs              # last 50 lines of the node log
+castrel-proxy proxy logs -n 200       # last 200 lines
+castrel-proxy proxy logs -f           # follow until Ctrl+C
+castrel-proxy proxy config            # paths, node id, server, redacted token digest
+castrel-proxy proxy unpair            # stop the node and delete the local pairing
+castrel-proxy proxy uninstall         # remove local state and the binary
+```
+
+`logs` reads `~/.castrel/proxy-node.log` (not the legacy `~/.castrel/castrel-proxy.log`) and
+tails it backwards, so a multi-hundred-megabyte log does not have to fit in memory.
+`config` prints the key file mode and a truncated SHA-256 of the token; the token and both
+private keys are never printed.
+
+`unpair` stops the background node first so Castrel sees the disconnect, then deletes
+`node/keys.json`, `node/policy.json` and `node/outbox.jsonl`. It keeps the log file. **It only
+changes local state**: revoke or delete the node in Castrel (`/proxies`) as well, otherwise
+the platform rejects the next pairing of the same machine with `node_already_paired`.
+
+`uninstall` stops both the node and the legacy bridge daemon and removes the node identity,
+policy snapshot, outbox, PID and log files, `~/.castrel/bundles/`, `proxy-exec-*` session
+directories, the legacy `config.yaml`, and the `castrel-proxy` binary. Use `--keep-logs` to
+keep the logs and `--keep-binary` when the CLI is an editable install you want to keep.
+`~/.castrel/skills/`, `mcp.json` and `whitelist.conf` are user content and are left alone.
+
 ### Runtime layout
 
 ```text
 ~/.castrel/node/keys.json       node id, token, private keys, server URL
+~/.castrel/node/policy.json     last policy received from the platform
 ~/.castrel/node/outbox.jsonl    bounded offline outbox
 ~/.castrel/proxy-node.pid       background process PID
 ~/.castrel/proxy-node.log       background process log
@@ -240,6 +268,9 @@ Connector calls are controlled by `allowed_connectors`, `allowed_tools`, `denied
 |---|---|
 | `No such command 'proxy'` | `which -a castrel-proxy` shows an older packaged binary first. Activate `.venv`, use `.venv/bin/castrel-proxy`, or `uv run castrel-proxy`. |
 | `Cannot load node keys` | Run `castrel-proxy proxy pair` first; check `~/.castrel/node/keys.json` permissions. |
+| `proxy logs` reports `Log file not found` | The node has not run in the background yet. `castrel-proxy proxy start` creates `~/.castrel/proxy-node.log`; the legacy bridge log is a different file. |
+| Pairing fails with `node_already_paired` (409) | `proxy unpair` only deletes local state. Revoke or delete the node in Castrel (`/proxies`) before pairing the same machine again, or pass `--force` after doing so. |
+| `proxy uninstall` left `~/.castrel/skills/` or `whitelist.conf` | Intended: those are user content. Everything the command removes is listed before it asks for confirmation. |
 | WebSocket closes `4001` | Token invalid, node not `active`, or the Ed25519 proof failed. Re-pair. |
 | WebSocket closes `4002` | Node revoked. Pair again. |
 | WebSocket closes `4003` | Protocol version unsupported. Upgrade the client. |
