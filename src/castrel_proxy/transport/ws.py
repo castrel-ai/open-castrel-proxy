@@ -35,6 +35,8 @@ from ..security.policy import (
     parse_policy,
 )
 from ..security.whitelist import get_default_whitelist, is_command_allowed
+from .handlers.files import FilesHandler
+from .handlers.sandbox import SandboxHandler
 from .spool import Outbox
 
 logger = logging.getLogger(__name__)
@@ -108,6 +110,8 @@ class ProxyNodeRuntime:
             send=self._send_stream_frame,
             policy_getter=lambda: self._policy,
         )
+        self.files = FilesHandler(lambda: self._policy)
+        self.sandbox = SandboxHandler(lambda: self._policy)
 
     async def _send_stream_frame(self, message_type: str, data: dict[str, Any]) -> None:
         ws = self._active_ws
@@ -145,6 +149,9 @@ class ProxyNodeRuntime:
         task = asyncio.create_task(self.egress.stop())
         task.add_done_callback(self._tasks.discard)
         self._tasks.add(task)
+        shutdown = asyncio.create_task(self.sandbox.shutdown())
+        shutdown.add_done_callback(self._tasks.discard)
+        self._tasks.add(shutdown)
 
     async def _session(self) -> None:
         headers = {
@@ -251,6 +258,7 @@ class ProxyNodeRuntime:
                     "capabilities": build_capabilities(),
                     "exec_whitelist": get_default_whitelist(),
                     "locale": detect_locale(),
+                    "sandbox": await asyncio.to_thread(self.sandbox.capability_block),
                 },
                 node_id=self.keys.node_id,
             )
@@ -267,6 +275,10 @@ class ProxyNodeRuntime:
         self._sync_exec_semaphore()
         self._remember_policy()
 
+    def _active_executions(self) -> int:
+        """Shell commands plus sandbox scripts currently running on this node."""
+        return len(self._inflight) + self.sandbox.active_executions
+
     def _sync_exec_semaphore(self) -> None:
         """Apply the node's max concurrency to shell execution as well as egress streams."""
         limit = self._policy.max_concurrency or 8
@@ -282,7 +294,11 @@ class ProxyNodeRuntime:
         message_type = frame["type"]
         data = frame.get("data") or {}
         if message_type == "heartbeat":
-            await self._send(ws, "heartbeat", {"active_executions": 0, "load": 0.0})
+            await self._send(
+                ws,
+                "heartbeat",
+                {"active_executions": self._active_executions(), "load": 0.0},
+            )
             return
         if message_type == "policy.update":
             self.policy = dict(data.get("policy") or {})
@@ -315,6 +331,14 @@ class ProxyNodeRuntime:
             return
         if message_type == "node.exec":
             await self._exec(data, ws)
+            return
+        if message_type.startswith("node.fs."):
+            payload = await self.files.handle(message_type, data)
+            await self._send(ws, f"{message_type}.result", payload)
+            return
+        if message_type.startswith("node.sandbox."):
+            payload = await self.sandbox.handle(message_type, data)
+            await self._send(ws, f"{message_type}.result", payload)
             return
         # Unknown frames are not swallowed: the platform correlates the failure by request id.
         await self._send_error(
@@ -351,6 +375,9 @@ class ProxyNodeRuntime:
     async def _cancel(self, data: dict[str, Any]) -> None:
         """Stop the request the platform gave up on (timeout or caller cancellation)."""
         request_id = str(data.get("request_id") or "")
+        # A chunked write may have a temporary file but no cancellation callback.
+        self.files.cancel(request_id)
+        self.sandbox.cancel(request_id)
         cancel = self._inflight.pop(request_id, None)
         if cancel is None:
             logger.info("Cancellation for unknown request %s", request_id)

@@ -32,6 +32,28 @@ class NetworkPolicy:
 
 
 @dataclass
+class FilesPolicy:
+    enabled: bool = True
+    roots: list[str] = field(default_factory=lambda: ["~"])
+    deny_paths: list[str] = field(default_factory=lambda: ["~/.castrel", "~/.ssh"])
+    allow_symlinks: bool = False
+    max_file_bytes: int = 10 * 1024 * 1024
+    max_read_bytes: int = 262_144
+
+
+@dataclass
+class SandboxPolicy:
+    enabled: bool = True
+    network: str = "none"
+    allowed_images: list[str] = field(
+        default_factory=lambda: ["castrelai/castrel-sandbox:latest"]
+    )
+    allow_caller_image: bool = False
+    allow_caller_network: bool = False
+    max_timeout_seconds: float = 300.0
+
+
+@dataclass
 class ProxyPolicy:
     allowed_connectors: list[str] = field(default_factory=lambda: ["*"])
     allowed_tools: dict[str, list[str]] = field(default_factory=dict)
@@ -41,6 +63,8 @@ class ProxyPolicy:
     max_result_bytes: int | None = None
     network: NetworkPolicy = field(default_factory=NetworkPolicy)
     exec: ExecPolicy = field(default_factory=ExecPolicy)
+    files: FilesPolicy = field(default_factory=FilesPolicy)
+    sandbox: SandboxPolicy = field(default_factory=SandboxPolicy)
 
 
 def _string_list(value: Any, fallback: list[str]) -> list[str]:
@@ -81,6 +105,12 @@ def parse_policy(document: dict[str, Any] | None) -> ProxyPolicy:
             network_document.get("max_bytes_per_stream")
         ),
     )
+    files_document = (
+        document.get("filesystem") if isinstance(document.get("filesystem"), dict) else {}
+    )
+    sandbox_document = (
+        document.get("sandbox") if isinstance(document.get("sandbox"), dict) else {}
+    )
     return ProxyPolicy(
         allowed_connectors=_string_list(document.get("allowed_connectors"), ["*"]),
         allowed_tools=_tool_map(document.get("allowed_tools")),
@@ -95,6 +125,28 @@ def parse_policy(document: dict[str, Any] | None) -> ProxyPolicy:
             allowlist=_string_list(exec_document.get("allowlist"), []),
             max_timeout_seconds=_positive_float(exec_document.get("max_timeout_seconds")) or 600.0,
             max_output_bytes=_positive_int(exec_document.get("max_output_bytes")) or 262_144,
+        ),
+        files=FilesPolicy(
+            enabled=bool(files_document.get("enabled", True)),
+            roots=_string_list(files_document.get("roots"), ["~"]),
+            deny_paths=_string_list(
+                files_document.get("deny_paths"), ["~/.castrel", "~/.ssh"]
+            ),
+            allow_symlinks=bool(files_document.get("allow_symlinks", False)),
+            max_file_bytes=_positive_int(files_document.get("max_file_bytes")) or 10 * 1024 * 1024,
+            max_read_bytes=_positive_int(files_document.get("max_read_bytes")) or 262_144,
+        ),
+        sandbox=SandboxPolicy(
+            enabled=bool(sandbox_document.get("enabled", True)),
+            network=str(sandbox_document.get("network") or "none"),
+            allowed_images=_string_list(
+                sandbox_document.get("allowed_images"),
+                ["castrelai/castrel-sandbox:latest"],
+            ),
+            allow_caller_image=bool(sandbox_document.get("allow_caller_image", False)),
+            allow_caller_network=bool(sandbox_document.get("allow_caller_network", False)),
+            max_timeout_seconds=_positive_float(sandbox_document.get("max_timeout_seconds"))
+            or 300.0,
         ),
     )
 
@@ -170,8 +222,10 @@ def effective_result_bytes(policy: ProxyPolicy, fallback: int) -> int:
 
 __all__ = [
     "ExecPolicy",
+    "FilesPolicy",
     "NetworkPolicy",
     "ProxyPolicy",
+    "SandboxPolicy",
     "check_connector",
     "check_exec",
     "check_tool",

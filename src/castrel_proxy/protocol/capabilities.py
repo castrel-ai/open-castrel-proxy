@@ -19,7 +19,7 @@ SKILLS_CAPABILITY = "skills.v1"
 # Capabilities whose handlers are implemented. Each handler phase appends its own entry here;
 # reporting a capability before its handler exists would make the platform send frames the node
 # cannot answer.
-ENABLED_OPERATIONS: tuple[str, ...] = ()
+ENABLED_OPERATIONS: tuple[str, ...] = (FILES_CAPABILITY, SANDBOX_CAPABILITY)
 
 DEFAULT_LOCALE = "en-US"
 

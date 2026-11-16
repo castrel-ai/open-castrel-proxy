@@ -57,8 +57,17 @@ class SandboxBackend(abc.ABC):
         argv: List[str],
         timeout: float,
         workdir: str = CONTAINER_MOUNT,
+        cancel_event: Optional[asyncio.Event] = None,
     ) -> Tuple[int, str, str]:
-        """Execute a command inside the container, returning (exit_code, stdout, stderr)."""
+        """Execute a command inside the container, returning (exit_code, stdout, stderr).
+
+        When ``cancel_event`` fires the backend kills the ``docker exec`` client; the process
+        inside the container keeps running, which is a limit of the CLI execution model.
+        """
+
+    async def list_containers(self, *, prefix: str) -> List[str]:
+        """Ids of containers whose name starts with ``prefix``; used to reap orphans."""
+        return []
 
     @abc.abstractmethod
     async def remove(self, *, container_id: str) -> None:
@@ -120,7 +129,12 @@ class CliSandboxBackend(SandboxBackend):
         self.engine = "docker"
         self.name = "docker-cli"
 
-    async def _run(self, args: List[str], timeout: float = 30.0) -> Tuple[int, str, str]:
+    async def _run(
+        self,
+        args: List[str],
+        timeout: float = 30.0,
+        cancel_event: Optional[asyncio.Event] = None,
+    ) -> Tuple[int, str, str]:
         try:
             proc = await asyncio.create_subprocess_exec(
                 self.engine,
@@ -133,17 +147,51 @@ class CliSandboxBackend(SandboxBackend):
             raise SandboxBackendError(f"Failed to spawn {self.engine}: {exc}") from exc
 
         try:
-            out_b, err_b = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            out_b, err_b, cancelled = await asyncio.wait_for(
+                self._communicate(proc, cancel_event), timeout=timeout
+            )
         except asyncio.TimeoutError:
             proc.kill()
-            await proc.wait()
+            try:
+                await proc.wait()
+            except Exception:  # noqa: BLE001 - the process may already be gone
+                pass
             return -1, "", f"{self.engine} {args[0] if args else ''} timed out after {timeout}s"
+        if cancelled:
+            return -1, "", "cancelled by the platform"
 
         return (
             proc.returncode if proc.returncode is not None else -1,
             out_b.decode("utf-8", errors="replace"),
             err_b.decode("utf-8", errors="replace"),
         )
+
+    @staticmethod
+    async def _communicate(
+        proc: asyncio.subprocess.Process,
+        cancel_event: Optional[asyncio.Event],
+    ) -> Tuple[bytes, bytes, bool]:
+        """Wait for the process; return ``cancelled=True`` when the event fired first."""
+        communicate = asyncio.ensure_future(proc.communicate())
+        if cancel_event is None:
+            out_b, err_b = await communicate
+            return out_b, err_b, False
+        canceller = asyncio.ensure_future(cancel_event.wait())
+        try:
+            done, _pending = await asyncio.wait(
+                {communicate, canceller}, return_when=asyncio.FIRST_COMPLETED
+            )
+        finally:
+            canceller.cancel()
+        if communicate in done:
+            out_b, err_b = communicate.result()
+            return out_b, err_b, False
+        proc.kill()
+        try:
+            await communicate
+        except Exception:  # noqa: BLE001 - a killed client often ends with an error
+            pass
+        return b"", b"", True
 
     async def create(
         self,
@@ -199,9 +247,18 @@ class CliSandboxBackend(SandboxBackend):
         argv: List[str],
         timeout: float,
         workdir: str = CONTAINER_MOUNT,
+        cancel_event: Optional[asyncio.Event] = None,
     ) -> Tuple[int, str, str]:
         args = ["exec", "-w", workdir, container_id, *argv]
-        return await self._run(args, timeout=timeout)
+        return await self._run(args, timeout=timeout, cancel_event=cancel_event)
+
+    async def list_containers(self, *, prefix: str) -> List[str]:
+        code, out, _err = await self._run(
+            ["ps", "-a", "--filter", f"name={prefix}", "--format", "{{.ID}}"], timeout=15.0
+        )
+        if code != 0:
+            return []
+        return [line.strip() for line in out.splitlines() if line.strip()]
 
     async def remove(self, *, container_id: str) -> None:
         await self._run(["rm", "-f", container_id], timeout=30.0)
@@ -316,7 +373,11 @@ class LlmSandboxBackend(SandboxBackend):
         argv: List[str],
         timeout: float,
         workdir: str = CONTAINER_MOUNT,
+        cancel_event: Optional[asyncio.Event] = None,
     ) -> Tuple[int, str, str]:
+        # The library owns the process handle, so cancellation cannot kill the client here;
+        # the manager still tears the container down after the grace period.
+        del cancel_event
         session = self._sessions.get(container_id)
         if session is None:
             return -1, "", f"No live sandbox session for container {container_id}"

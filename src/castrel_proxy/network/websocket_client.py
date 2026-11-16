@@ -1,3 +1,5 @@
+# Deprecated: legacy bridge transport. Only `castrel-proxy pair/start` (protocol v1) uses
+# this module; every new capability ships on the v2 node transport in `transport/ws.py`.
 """
 WebSocket Client Module
 

@@ -78,6 +78,12 @@ class SandboxConfig:
     reaper_interval: float = 60.0
     max_concurrent: int = 4
     exec_timeout: int = 300
+    # Output cap for one exec; the platform applies the same limit on its side.
+    max_output_bytes: int = 262144
+    # Pull the image on demand; disable to require a pre-loaded image on the node.
+    pull_image: bool = True
+    create_timeout: float = 60.0
+    pull_timeout: float = 600.0
     resources: SandboxResources = field(default_factory=SandboxResources)
 
     @property
@@ -108,6 +114,10 @@ class SandboxConfig:
             reaper_interval=_coerce_float(data.get("reaper_interval"), 60.0),
             max_concurrent=_coerce_int(data.get("max_concurrent"), 4),
             exec_timeout=_coerce_int(data.get("exec_timeout"), 300),
+            max_output_bytes=_coerce_int(data.get("max_output_bytes"), 262144),
+            pull_image=_coerce_bool(data.get("pull_image", True)),
+            create_timeout=_coerce_float(data.get("create_timeout"), 60.0),
+            pull_timeout=_coerce_float(data.get("pull_timeout"), 600.0),
             resources=SandboxResources.from_dict(data.get("resources")),
         )
 

@@ -90,6 +90,35 @@ class ProxySandboxManager:
     def engine(self) -> Optional[str]:
         return self._engine
 
+    @property
+    def active_executions(self) -> int:
+        """Execs currently running inside sandboxes on this node."""
+        return sum(record.active_execs for record in self._sessions.values())
+
+    @property
+    def session_count(self) -> int:
+        """Sandbox sessions this node currently owns."""
+        return len(self._sessions)
+
+    async def reconcile(self) -> int:
+        """Remove ``castrel-sbx-*`` containers left behind by a previous daemon run."""
+        backend = self._ensure_backend()
+        known = {record.container_id for record in self._sessions.values()}
+        removed = 0
+        for container_id in await backend.list_containers(prefix="castrel-sbx-"):
+            if container_id in known:
+                continue
+            try:
+                await backend.remove(container_id=container_id)
+                removed += 1
+            except Exception as exc:  # noqa: BLE001 - best-effort cleanup
+                logger.warning(
+                    "[SANDBOX-RECONCILE] container=%s error=%s", container_id[:12], exc
+                )
+        if removed:
+            logger.info("[SANDBOX-RECONCILE] removed %d orphan container(s)", removed)
+        return removed
+
     # -- startup preparation ------------------------------------------------
     async def prepare(self) -> Dict[str, Any]:
         """Warm up the sandbox subsystem at proxy startup.
@@ -115,6 +144,7 @@ class ProxySandboxManager:
             pulled = await backend.ensure_image(self.config.image)
             status["image_pulled"] = pulled
             status["ready"] = True
+            status["orphans_removed"] = await self.reconcile()
             await self.start()
             logger.info(
                 "[SANDBOX-PREPARE] engine=%s image=%s pulled=%s ready=True",
@@ -224,6 +254,7 @@ class ProxySandboxManager:
         path: Optional[str] = None,
         mode: str = "untrusted",
         timeout: Optional[float] = None,
+        cancel_event: Optional[asyncio.Event] = None,
     ) -> ExecResult:
         """Run an execute-class script inside the session sandbox."""
         interpreter = interpreter_for_language(language)
@@ -289,6 +320,7 @@ class ProxySandboxManager:
                     container_id=record.container_id,
                     argv=argv,
                     timeout=timeout,
+                    cancel_event=cancel_event,
                 )
                 elapsed = time.monotonic() - start
         finally:

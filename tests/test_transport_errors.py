@@ -28,7 +28,8 @@ async def test_unknown_message_type_answers_with_an_error_frame():
     websocket = _FakeWebSocket()
 
     await node._handle(
-        {"type": "node.fs.read", "data": {"request_id": "r1", "path": "~/a"}}, websocket
+        {"type": "node.http.request", "data": {"request_id": "r1", "url": "https://example.test"}},
+        websocket,
     )
 
     frame = websocket.frames[-1]
