@@ -221,10 +221,14 @@ def test_legacy_destinations_map_into_network() -> None:
 
 
 @pytest.mark.asyncio
-async def test_custom_max_concurrency_limits_streams() -> None:
+async def test_network_stream_limit_is_independent_of_exec_concurrency() -> None:
+    """Streams follow `network.max_streams_per_node`, not the shell/sandbox concurrency."""
     server, port = await echo_server()
     policy = parse_policy(
-        {"max_concurrency": 1, "network": {"allowed_destinations": ["127.0.0.1"]}}
+        {
+            "max_concurrency": 1,
+            "network": {"allowed_destinations": ["127.0.0.1"], "max_streams_per_node": 1},
+        }
     )
     captured: list[tuple[str, dict[str, Any]]] = []
 
@@ -245,6 +249,46 @@ async def test_custom_max_concurrency_limits_streams() -> None:
         error = await wait_for_frame(frames, "stream.error")
         assert error["code"] == "stream_limit"
         assert error["stream_id"] == "b" * 32
+    finally:
+        await egress.stop()
+        server.close()
+        await server.wait_closed()
+
+
+@pytest.mark.asyncio
+async def test_exec_concurrency_does_not_cap_network_streams() -> None:
+    """`max_concurrency` bounds shell/sandbox work, not egress streams.
+
+    Streams follow `network.max_streams_per_node`; the two used to be conflated.
+    """
+    server, port = await echo_server()
+    policy = parse_policy(
+        {
+            # The tenant default. Before the fix the node refused the 2nd stream here.
+            "max_concurrency": 1,
+            "network": {"allowed_destinations": ["127.0.0.1"], "max_streams_per_node": 4},
+        }
+    )
+    captured: list[tuple[str, dict[str, Any]]] = []
+
+    async def send(message_type: str, data: dict[str, Any]) -> None:
+        captured.append((message_type, data))
+
+    egress = EgressManager(send=send, policy_getter=lambda: policy)
+    egress.configure({}, policy_version=1)
+    try:
+        for letter in "abc":
+            await egress.open(
+                {
+                    "stream_id": letter * 32,
+                    "host": "127.0.0.1",
+                    "port": port,
+                    "policy_version": 1,
+                }
+            )
+            await wait_for_frame(captured, "stream.opened")
+        assert not [data for kind, data in captured if kind == "stream.error"]
+        assert len(egress.streams) == 3
     finally:
         await egress.stop()
         server.close()
