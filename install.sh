@@ -13,7 +13,7 @@
 set -e
 
 # Hardcoded version (tag includes "v" prefix)
-VERSION="v0.1.14"
+VERSION="v0.1.16"
 
 BINARY_NAME="castrel-proxy"
 INSTALL_DIR=""
