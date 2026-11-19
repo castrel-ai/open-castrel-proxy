@@ -1,0 +1,58 @@
+# Keep the build context to what the Dockerfiles actually COPY:
+#   pyproject.toml uv.lock LICENSE README.md  src/  scripts/  config/mcp-empty.json
+#   mcp-bundle.template.yaml  builtin-skills/  (Dockerfile.sandbox)
+# Everything below is either rebuilt inside the image or never used by it.
+
+# --- Version control, IDE, OS noise -----------------------------------------
+.git
+.gitignore
+.gitattributes
+.github
+.idea
+.vscode
+.DS_Store
+*.swp
+*.swo
+*~
+
+# --- Python virtualenvs, caches, build output -------------------------------
+.venv
+venv
+env
+.eggs
+*.egg-info
+__pycache__
+*.py[cod]
+*$py.class
+.mypy_cache
+.pytest_cache
+.coverage
+.coverage.*
+htmlcov
+build
+dist
+*.log
+
+# --- PyInstaller packaging artifacts ---------------------------------------
+castrel-proxy.spec
+*.manifest
+
+# --- Tests and docs: not part of any image ---------------------------------
+tests
+docs
+CHANGELOG.md
+CODE_OF_CONDUCT.md
+CONTRIBUTING.md
+DOCKERHUB.md
+MIGRATION_GUIDE.md
+SECURITY.md
+README_zh.md
+examples
+
+# --- Generated during the image build --------------------------------------
+mcp-bundle.yaml
+mcp-bundle.lock.yaml
+
+# --- User-specific runtime config ------------------------------------------
+config.yaml
+mcp.json

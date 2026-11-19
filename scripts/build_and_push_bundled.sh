@@ -10,6 +10,7 @@ IMAGE_NAME="castrel-proxy"
 PLATFORMS="linux/amd64,linux/arm64"
 DOCKERFILE="Dockerfile.bundled"
 STRICT_LATEST="1"
+DEBIAN_MIRROR="deb.debian.org"
 PUSH_LATEST="1"
 LATEST_ONLY="0"
 LOAD="0"
@@ -27,6 +28,9 @@ Optional:
   --platforms <list>    Buildx platforms (default: linux/amd64,linux/arm64)
   --dockerfile <path>   Dockerfile path relative to open-castrel-proxy (default: Dockerfile.bundled)
   --strict-latest <0|1> Pass build arg MCP_BUNDLE_STRICT_LATEST (default: 1)
+  --debian-mirror <origin> Debian archive origin for apt-get inside the image
+                        (default: deb.debian.org; e.g. mirrors.aliyun.com).
+                        A bare host is upgraded to https://.
   --push-latest <0|1>   Also push :latest tag (default: 1)
   --latest-only <0|1>   Only push :latest tag (default: 0)
   --load <0|1>          Local mode: build single-arch and load into the local
@@ -42,6 +46,11 @@ Examples:
   ./scripts/build_and_push_bundled.sh --version 0.1.11 --hub castrelai
   ./scripts/build_and_push_bundled.sh --version 0.1.11 --hub myorg --push-latest 0
   ./scripts/build_and_push_bundled.sh --hub castrelai --latest-only 1
+
+  # Mainland China network: use a domestic Debian mirror for apt-get.
+  # The https:// scheme matters: some networks block port 80 outright.
+  ./scripts/build_and_push_bundled.sh --version 0.1.16 --hub castrelai \
+    --debian-mirror https://mirrors.aliyun.com --push-latest 0
 EOF
 }
 
@@ -69,6 +78,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --strict-latest)
       STRICT_LATEST="${2:-}"
+      shift 2
+      ;;
+    --debian-mirror)
+      DEBIAN_MIRROR="${2:-}"
       shift 2
       ;;
     --push-latest)
@@ -203,12 +216,14 @@ fi
 echo "Platforms: ${PLATFORMS}"
 echo "Dockerfile: ${DOCKERFILE_PATH}"
 echo "MCP_BUNDLE_STRICT_LATEST=${STRICT_LATEST}"
+echo "DEBIAN_MIRROR=${DEBIAN_MIRROR}"
 echo "Output: ${OUTPUT_FLAG}"
 
 docker buildx build \
   --platform "${PLATFORMS}" \
   --file "${DOCKERFILE_PATH}" \
   --build-arg "MCP_BUNDLE_STRICT_LATEST=${STRICT_LATEST}" \
+  --build-arg "DEBIAN_MIRROR=${DEBIAN_MIRROR}" \
   "${TAGS[@]}" \
   "${OUTPUT_FLAG}" \
   "${PROJECT_ROOT}"

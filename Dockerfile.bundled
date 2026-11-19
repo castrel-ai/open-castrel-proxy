@@ -18,8 +18,31 @@ FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS runtime-base
 
 WORKDIR /app
 
+# Debian archive used by the apt-get steps below. The base image ships a
+# deb822 sources file pointing at http://deb.debian.org, which is slow or
+# unreachable from some networks (e.g. mainland China). Override at build time:
+#   --build-arg DEBIAN_MIRROR=https://mirrors.aliyun.com
+# A bare host (no scheme) is upgraded to https://, because the base image's own
+# sources file uses http:// (port 80) and port 80 is blocked on some networks.
+# Pass an explicit http:// prefix if a mirror only serves plain HTTP.
+ARG DEBIAN_MIRROR=deb.debian.org
+
 RUN --mount=type=cache,id=castrel-apt-cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,id=castrel-apt-lists,target=/var/lib/apt/lists,sharing=locked \
+    # Point the base image's deb822 sources at the requested mirror. The file
+    # only exists on bookworm+; ignore a miss on older bases.
+    if [ "${DEBIAN_MIRROR}" != "deb.debian.org" ]; then \
+        case "${DEBIAN_MIRROR}" in \
+            *://*) MIRROR_ORIGIN="${DEBIAN_MIRROR}" ;; \
+            *) MIRROR_ORIGIN="https://${DEBIAN_MIRROR}" ;; \
+        esac && \
+        # Replace scheme and host in one pass so a https:// override also moves the \
+        # archive off port 80 (blocked on some networks). \
+        sed -i "s|http://deb.debian.org|${MIRROR_ORIGIN}|g" \
+            /etc/apt/sources.list.d/debian.sources 2>/dev/null \
+        || sed -i "s|http://deb.debian.org|${MIRROR_ORIGIN}|g" /etc/apt/sources.list 2>/dev/null \
+        || true; \
+    fi && \
     apt-get update && apt-get install -y --no-install-recommends \
         tini curl ca-certificates gnupg git openjdk-17-jre-headless && \
     mkdir -p /etc/apt/keyrings && \
@@ -59,7 +82,8 @@ RUN if [ "$MCP_BUNDLE_STRICT_LATEST" = "1" ]; then \
 
 ARG PG_MCP_VERSION=3.3.6
 ARG GIT_MCP_VERSION=2026.1.14
-ARG GRAFANA_MCP_VERSION=0.12.1
+# 0.12.1 was never published on PyPI; this pin predates the 1.x/2.x line.
+ARG GRAFANA_MCP_VERSION=2.2.0
 ARG REDIS_MCP_VERSION=0.5.0
 ARG RABBITMQ_MCP_VERSION=2.2.4
 RUN --mount=type=cache,id=castrel-uv-mcp-cache,target=/root/.cache/uv,sharing=locked \
@@ -73,12 +97,11 @@ RUN --mount=type=cache,id=castrel-uv-mcp-cache,target=/root/.cache/uv,sharing=lo
     uv pip install --python /opt/mcp-tools/rabbitmq/bin/python "amq-mcp-server-rabbitmq==${RABBITMQ_MCP_VERSION}" && \
     uv venv /opt/mcp-tools/postgresql && \
     uv pip install --python /opt/mcp-tools/postgresql/bin/python "mcp-postgresql-ops==${PG_MCP_VERSION}" && \
-    # Clean up bytecode cache and test files in all Python venvs
     find /opt/mcp-tools/git /opt/mcp-tools/grafana /opt/mcp-tools/redis \
          /opt/mcp-tools/rabbitmq /opt/mcp-tools/postgresql \
         \( -type d -name '__pycache__' -o -type d -name 'test' -o -type d -name 'tests' \
            -o -name '*.pyc' -o -name '*.pyo' \) \
-        -exec rm -rf {} + 2>/dev/null || true
+        -exec rm -rf {} +
 
 ARG TIME_MCP_VERSION=1.0.0
 ARG FETCH_MCP_VERSION=1.1.2
@@ -163,7 +186,14 @@ RUN mkdir -p /opt/castrel-cache/uv /opt/castrel-cache/npm
 
 ENV NPM_CONFIG_PREFER_OFFLINE=true
 
-RUN useradd --create-home --shell /bin/bash castrel && \
+# Every MCP tool directory listed here is created by an earlier layer; naming a missing one
+# means that layer silently skipped its install, so fail here instead of shipping an image with
+# half its tools.
+RUN for dir in /opt/mcp-tools/npm /opt/mcp-tools/git /opt/mcp-tools/grafana \
+               /opt/mcp-tools/redis /opt/mcp-tools/rabbitmq /opt/mcp-tools/postgresql; do \
+        [ -d "$dir" ] || { echo "missing MCP tool directory: $dir" >&2; exit 1; }; \
+    done && \
+    useradd --create-home --shell /bin/bash castrel && \
     mkdir -p /home/castrel/.castrel && \
     cp /app/mcp-empty.json /home/castrel/.castrel/mcp.json && \
     chown -R castrel:castrel /app /home/castrel /opt/castrel-cache /opt/eclipse-mat \
