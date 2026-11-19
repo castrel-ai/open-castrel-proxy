@@ -329,7 +329,15 @@ def pair(
     typer.echo(f"  status: {document.get('status')}")
     typer.echo(f"  keys: {key_file}")
     if no_start:
-        typer.echo("Node not started (--no-start). Run 'castrel-proxy proxy start'.")
+        # Success, not a failure: the documented Docker flow pairs in a throwaway container and
+        # starts the node from the container created next. Say so, instead of reading like an
+        # error that left the node down.
+        typer.secho(
+            "Pairing complete; this container did not start the node.",
+            fg=typer.colors.GREEN,
+        )
+        typer.echo("  Start it with 'castrel-proxy proxy start', or continue with the next")
+        typer.echo("  install step, which runs it in a detached container.")
         return
     if str(document.get("status")) != "active":
         typer.echo("Node is waiting for approval; start it after approval with 'proxy start'.")

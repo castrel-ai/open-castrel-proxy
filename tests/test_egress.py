@@ -205,14 +205,14 @@ def test_node_policy_parses_the_network_block() -> None:
                 "enabled": False,
                 "allowed_destinations": ["*.internal"],
                 "allowed_ports": [80, 9090, "bad"],
-                "max_streams_per_node": 4,
+                "max_streams": 4,
             }
         }
     )
     assert policy.network.enabled is False
     assert policy.network.allowed_destinations == ["*.internal"]
     assert policy.network.allowed_ports == [80, 9090]
-    assert policy.network.max_streams_per_node == 4
+    assert policy.network.max_streams == 4
 
 
 def test_legacy_destinations_map_into_network() -> None:
@@ -222,12 +222,12 @@ def test_legacy_destinations_map_into_network() -> None:
 
 @pytest.mark.asyncio
 async def test_network_stream_limit_is_independent_of_exec_concurrency() -> None:
-    """Streams follow `network.max_streams_per_node`, not the shell/sandbox concurrency."""
+    """Streams follow `network.max_streams`, not the shell/sandbox concurrency."""
     server, port = await echo_server()
     policy = parse_policy(
         {
             "max_concurrency": 1,
-            "network": {"allowed_destinations": ["127.0.0.1"], "max_streams_per_node": 1},
+            "network": {"allowed_destinations": ["127.0.0.1"], "max_streams": 1},
         }
     )
     captured: list[tuple[str, dict[str, Any]]] = []
@@ -259,14 +259,14 @@ async def test_network_stream_limit_is_independent_of_exec_concurrency() -> None
 async def test_exec_concurrency_does_not_cap_network_streams() -> None:
     """`max_concurrency` bounds shell/sandbox work, not egress streams.
 
-    Streams follow `network.max_streams_per_node`; the two used to be conflated.
+    Streams follow `network.max_streams`; the two used to be conflated.
     """
     server, port = await echo_server()
     policy = parse_policy(
         {
             # The tenant default. Before the fix the node refused the 2nd stream here.
             "max_concurrency": 1,
-            "network": {"allowed_destinations": ["127.0.0.1"], "max_streams_per_node": 4},
+            "network": {"allowed_destinations": ["127.0.0.1"], "max_streams": 4},
         }
     )
     captured: list[tuple[str, dict[str, Any]]] = []

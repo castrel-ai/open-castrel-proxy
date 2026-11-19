@@ -60,8 +60,10 @@ class EgressManager:
             4096,
             8 * 1024 * 1024,
         )
+        # One ceiling for the whole node: the platform used to send a separate per-instance
+        # number too, and the two only ever met in the same check.
         self.max_streams = _clamped(
-            document.get("max_streams_per_node"), STREAM_MAX_STREAMS, 1, 1024
+            document.get("max_streams"), STREAM_MAX_STREAMS, 1, 1024
         )
         self.idle_timeout = float(
             _clamped(
@@ -108,19 +110,18 @@ class EgressManager:
             await self._error(stream_id, "stream_denied", denial)
             return
         node_streams = len(self.streams)
-        instance_streams = sum(
-            1 for stream in self.streams.values() if stream.instance_id == instance_id
-        )
-        limits = check_stream_limits(policy, node_streams, instance_streams)
+        limits = check_stream_limits(policy, node_streams)
         if limits is not None:
             await self._error(stream_id, "stream_limit", limits)
             return
         # The deployment cap from `session.ready` applies when the policy names no limit.
         if node_streams >= self.max_streams:
+            # Name the numbers: the connector only ever sees a SOCKS reply code, so this message
+            # is the operator's only chance to see what actually ran out.
             await self._error(
                 stream_id,
                 "stream_limit",
-                "The node reached its configured stream limit.",
+                f"The node holds {node_streams} of {self.max_streams} concurrent egress streams.",
             )
             return
 

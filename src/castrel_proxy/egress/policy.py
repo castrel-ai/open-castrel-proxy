@@ -47,24 +47,15 @@ def check_destination(policy: ProxyPolicy, host: str, port: int) -> str | None:
     return None
 
 
-def check_stream_limits(
-    policy: ProxyPolicy, node_streams: int, instance_streams: int
-) -> str | None:
-    """Whether another egress stream fits, judged by the network limits only.
+def check_stream_limits(policy: ProxyPolicy, node_streams: int) -> str | None:
+    """Whether another egress stream fits, judged by the node policy only.
 
-    `max_concurrency` is the node's budget for shell and sandbox work; it used to stand in for
-    `max_streams_per_node` here, so a node with the tenant default (8) refused the 9th stream
-    while the UI showed a stream limit of 16. The two settings answer different questions and
-    are enforced separately (`self.max_streams` covers the deployment cap in the manager).
+    `max_concurrency` is the node's budget for shell and sandbox work; it is a different question
+    and is enforced separately (`self.max_streams` covers the deployment cap in the manager).
     """
-    network = policy.network
-    if network.max_streams_per_node is not None and node_streams >= network.max_streams_per_node:
-        return "The node reached its network stream limit."
-    if (
-        network.max_streams_per_instance is not None
-        and instance_streams >= network.max_streams_per_instance
-    ):
-        return "The connector instance reached its network stream limit."
+    limit = policy.network.max_streams
+    if limit is not None and node_streams >= limit:
+        return f"The node's policy allows {limit} concurrent egress streams."
     return None
 
 

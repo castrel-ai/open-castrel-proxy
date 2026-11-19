@@ -25,8 +25,7 @@ class NetworkPolicy:
     enabled: bool = True
     allowed_destinations: list[str] = field(default_factory=lambda: ["*"])
     allowed_ports: list[int] = field(default_factory=list)
-    max_streams_per_node: int | None = None
-    max_streams_per_instance: int | None = None
+    max_streams: int | None = None
     idle_timeout_seconds: int | None = None
     max_bytes_per_stream: int | None = None
 
@@ -96,10 +95,7 @@ def parse_policy(document: dict[str, Any] | None) -> ProxyPolicy:
             network_document.get("allowed_destinations"), ["*"]
         ),
         allowed_ports=_int_list(network_document.get("allowed_ports")),
-        max_streams_per_node=_positive_int(network_document.get("max_streams_per_node")),
-        max_streams_per_instance=_positive_int(
-            network_document.get("max_streams_per_instance")
-        ),
+        max_streams=_positive_int(network_document.get("max_streams")),
         idle_timeout_seconds=_positive_int(network_document.get("idle_timeout_seconds")),
         max_bytes_per_stream=_positive_int(
             network_document.get("max_bytes_per_stream")
